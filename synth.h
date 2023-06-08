@@ -34,21 +34,21 @@
 #define CHK(x,y) (x & (1<<y))           			// |
 #define TOG(x,y) (x^=(1<<y))            			//-+
 
-volatile unsigned int PCW[4] = {
+volatile unsigned int WavePhaseAcc[4] = {
   0, 0, 0, 0};			//-Wave phase accumolators
-volatile unsigned int FTW[4] = {
+volatile unsigned int WavePhaseInc[4] = {
   1000, 200, 300, 400};           //-Wave frequency tuning words
 volatile unsigned char AMP[4] = {
   255, 255, 255, 255};           //-Wave amplitudes [0-255]
 volatile unsigned int PITCH[4] = {
   500, 500, 500, 500};          //-Voice pitch
-volatile int MOD[4] = {
+volatile int EnvelopeModulation[4] = {
   20, 0, 64, 127};                         //-Voice envelope modulation [0-1023 512=no mod. <512 pitch down >512 pitch up]
 volatile unsigned int wavs[4];                                  //-Wave table selector [address of wave in memory]
 volatile unsigned int envs[4];                                  //-Envelopte selector [address of envelope in memory]
-volatile unsigned int EPCW[4] = {
+volatile unsigned int EnvelopePhaseAcc[4] = {
   0x8000, 0x8000, 0x8000, 0x8000}; //-Envelope phase accumolator
-volatile unsigned int EFTW[4] = {
+volatile unsigned int EnvelopePhaseInc[4] = {
   10, 10, 10, 10};               //-Envelope speed tuning word
 volatile unsigned char divider = 4;                             //-Sample rate decimator for envelope
 volatile unsigned int tim = 0;
@@ -56,11 +56,107 @@ volatile unsigned char tik = 0;
 volatile unsigned char output_mode;
 
 
+// Output pins, Timers etc (Board specific, see Atmel datasheet of your chip, 16bit Timer, Register Description)
+// Any changes must also be incorporate the begin function!
+  #if defined(__AVR_ATmega8__) 
+    // https://docs.arduino.cc/hacking/hardware/PinMapping
+    // https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-2486-8-bit-AVR-microcontroller-ATmega8_L_datasheet.pdf
+    #define LED_PIN       13
+    #define LED_PORT      PORTB //register address
+    #define LED_BIT       5     //relevant bit in register address  //usage: TOG(LED_PORT, LED_BIT);
+
+    /* TODO
+    //PWM (2-Channel: A and B)
+    #define PWM_A_PIN     11
+    #define PWM_A_DDR     DDRB    // Data Direction byte of the port (DDR + port)
+    #define PWM_A_Bit     3       // relevant bit in port
+    #define PWM_A_VALUE   OCR2A   // Output Compare Register
+    
+    #define PWM_B_PIN     3
+    #define PWM_B_DDR     DDRD    // Data Direction byte of the port (DDR + port)
+    #define PWM_B_Bit     3       // relevant bit in port
+    #define PWM_B_VALUE   OCR2B   // Output Compare Register
+
+    #define PWM_TCCRA     TCCR2A  // Timer/Counter <2> Control Register A
+    #define PWM_TCCRB     TCCR2B  
+
+    //Audio Driver Interrupt - ADI
+    #define ADI_TCCRA     TCCR1A  // Timer/Counter <1> Control Register A
+    #define ADI_TCCRB     TCCR1B
+    #define ADI_TCCRC     TCCR1C
+    #define ADI_VALUE     OCR1A
+    #define ADI_TIMSK     TIMSK1 // Timer/Counter <1> Interrupt Mask Register
+    #define ADI_OCIE      OCIE1A // Output Compare Interrupt Enable Bit
+    #define ADI_INTERRUPT TIMER1_COMPA_vect
+    */
+  #elif defined(__AVR_ATmega1280__)  || defined(__AVR_ATmega2560__)
+    // https://docs.arduino.cc/hacking/hardware/PinMapping2560
+    // https://ww1.microchip.com/downloads/en/devicedoc/atmel-2549-8-bit-avr-microcontroller-atmega640-1280-1281-2560-2561_datasheet.pdf
+    #define LED_PIN       13
+    #define LED_PORT      PORTB //register address
+    #define LED_BIT       7     //relevant bit in register address
+    
+    //PWM (2-Channel: A and B)
+    #define PWM_A_PIN     3       // PE5 (OC3C) -> Port E, Bit 3; Timer 3, Compare Register C
+    #define PWM_A_DDR     DDRE    // Data Direction byte of the port (DDR + port)
+    #define PWM_A_Bit     5       // relevant bit in port
+    #define PWM_A_VALUE   OCR3C   // Output Compare Register
+    
+    #define PWM_B_PIN     2       // PE4 (OC3B)
+    #define PWM_B_DDR     DDRE    // Data Direction byte of the port (DDR + port)
+    #define PWM_B_Bit     4       // relevant bit in port
+    #define PWM_B_VALUE   OCR3B   // Output Compare Register
+
+    #define PWM_TCCRA     TCCR3A  // Timer/Counter <3> Control Register A
+    #define PWM_TCCRB     TCCR3B  
+
+    //Audio Driver Interrupt - ADI
+    #define ADI_TCCRA     TCCR1A  // Timer/Counter <1> Control Register A
+    #define ADI_TCCRB     TCCR1B
+    #define ADI_TCCRC     TCCR1C
+    #define ADI_VALUE     OCR1A
+    #define ADI_TIMSK     TIMSK1 // Timer/Counter <1> Interrupt Mask Register
+    #define ADI_OCIE      OCIE1A // Output Compare Interrupt Enable Bit
+    #define ADI_INTERRUPT TIMER1_COMPA_vect
+  #else 
+    // ATmega168 (and ATmega328 ?) boards
+    // https://docs.arduino.cc/hacking/hardware/PinMapping168
+    // https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-9365-Automotive-Microcontrollers-ATmega88-ATmega168_Datasheet.pdf
+    #define LED_PIN       13
+    #define LED_PORT      PORTB //register address
+    #define LED_BIT       5     //relevant bit in register address
+    
+    //PWM (2-Channel: A and B)
+    #define PWM_A_PIN     11
+    #define PWM_A_DDR     DDRB    // Data Direction byte of the port (DDR + port)
+    #define PWM_A_Bit     3       // relevant bit in port
+    #define PWM_A_VALUE   OCR2A   // Output Compare Register
+    
+    #define PWM_B_PIN     3       // PD3 (OC2B)
+    #define PWM_B_DDR     DDRD    // Data Direction byte of the port (DDR + port)
+    #define PWM_B_Bit     3       // relevant bit in port
+    #define PWM_B_VALUE   OCR2B   // Output Compare Register
+
+    #define PWM_TCCRA     TCCR2A  // Timer/Counter <2> Control Register A
+    #define PWM_TCCRB     TCCR2B  
+
+    //Audio Driver Interrupt - ADI
+    #define ADI_TCCRA     TCCR1A  // Timer/Counter <1> Control Register A
+    #define ADI_TCCRB     TCCR1B
+    #define ADI_TCCRC     TCCR1C
+    #define ADI_VALUE     OCR1A
+    #define ADI_TIMSK     TIMSK1 // Timer/Counter <1> Interrupt Mask Register
+    #define ADI_OCIE      OCIE1A // Output Compare Interrupt Enable Bit
+    #define ADI_INTERRUPT TIMER1_COMPA_vect
+  #endif
+//
+
+
 //*********************************************************************************************
 //  Audio driver interrupt
 //*********************************************************************************************
 
-SIGNAL(TIMER1_COMPA_vect)
+SIGNAL(ADI_INTERRUPT)
 {
   //-------------------------------
   // Time division
@@ -73,8 +169,8 @@ SIGNAL(TIMER1_COMPA_vect)
   // Volume envelope generator
   //-------------------------------
 
-  if (!(((unsigned char*)&EPCW[divider])[1]&0x80))
-    AMP[divider] = pgm_read_byte(envs[divider] + (((unsigned char*)&(EPCW[divider]+=EFTW[divider]))[1]));
+  if (!(((unsigned char*)&EnvelopePhaseAcc[divider])[1]&0x80))
+    AMP[divider] = pgm_read_byte(envs[divider] + (((unsigned char*)&(EnvelopePhaseAcc[divider]+=EnvelopePhaseInc[divider]))[1]));
   else
     AMP[divider] = 0;
 
@@ -82,19 +178,19 @@ SIGNAL(TIMER1_COMPA_vect)
   //  Synthesizer/audio mixer
   //-------------------------------
 
-  OCR2A = OCR2B = 127 +
+  PWM_A_VALUE = PWM_B_VALUE = 127 +
     ((
-  (((signed char)pgm_read_byte(wavs[0] + ((unsigned char *)&(PCW[0] += FTW[0]))[1]) * AMP[0]) >> 8) +
-    (((signed char)pgm_read_byte(wavs[1] + ((unsigned char *)&(PCW[1] += FTW[1]))[1]) * AMP[1]) >> 8) +
-    (((signed char)pgm_read_byte(wavs[2] + ((unsigned char *)&(PCW[2] += FTW[2]))[1]) * AMP[2]) >> 8) +
-    (((signed char)pgm_read_byte(wavs[3] + ((unsigned char *)&(PCW[3] += FTW[3]))[1]) * AMP[3]) >> 8)
+    (((signed char)pgm_read_byte(wavs[0] + ((unsigned char *)&(WavePhaseAcc[0] += WavePhaseInc[0]))[1]) * AMP[0]) >> 8) +
+    (((signed char)pgm_read_byte(wavs[1] + ((unsigned char *)&(WavePhaseAcc[1] += WavePhaseInc[1]))[1]) * AMP[1]) >> 8) +
+    (((signed char)pgm_read_byte(wavs[2] + ((unsigned char *)&(WavePhaseAcc[2] += WavePhaseInc[2]))[1]) * AMP[2]) >> 8) +
+    (((signed char)pgm_read_byte(wavs[3] + ((unsigned char *)&(WavePhaseAcc[3] += WavePhaseInc[3]))[1]) * AMP[3]) >> 8)
     ) >> 2);
 
   //************************************************
   //  Modulation engine
   //************************************************
-  //  FTW[divider] = PITCH[divider] + (int)   (((PITCH[divider]/64)*(EPCW[divider]/64)) /128)*MOD[divider];
-  FTW[divider] = PITCH[divider] + (int)   (((PITCH[divider]>>6)*(EPCW[divider]>>6))/128)*MOD[divider];
+  //  WavePhaseInc[divider] = PITCH[divider] + (int)   (((PITCH[divider]/64)*(EnvelopePhaseAcc[divider]/64)) /128)*EnvelopeModulation[divider];
+  WavePhaseInc[divider] = PITCH[divider] + (int)   (((PITCH[divider]>>6)*(EnvelopePhaseAcc[divider]>>6))/128)*EnvelopeModulation[divider];
 	tim++;
 }
 
@@ -109,66 +205,67 @@ public:
   }
 
   //*********************************************************************
-  //  Startup default
+  //  Startup
   //*********************************************************************
 
   void begin()
   {
     output_mode=CHA;
-    TCCR1A = 0x00;                                  //-Start audio interrupt
-    TCCR1B = 0x09;
-    TCCR1C = 0x00;
-    OCR1A=16000000.0 / FS;			    //-Auto sample rate
-    SET(TIMSK1, OCIE1A);                            //-Start audio interrupt
-    sei();                                          //-+
-
-    TCCR2A = 0x83;                                  //-8 bit audio PWM
-    TCCR2B = 0x01;                                  // |
-    OCR2A = 127;                                    //-+
-    SET(DDRB, 3);				    //-PWM pin
+    begin(output_mode);
   }
-
-  //*********************************************************************
-  //  Startup fancy selecting varoius output modes
-  //*********************************************************************
 
   void begin(unsigned char d)
   {
-    TCCR1A = 0x00;                                  //-Start audio interrupt
-    TCCR1B = 0x09;
-    TCCR1C = 0x00;
-    OCR1A=16000000.0 / FS;			    //-Auto sample rate
-    SET(TIMSK1, OCIE1A);                            //-Start audio interrupt
-    sei();                                          //-+
+    //Audio Driver Interrupt - ADI
+    ADI_TCCRA = 0x00;             //-Start audio interrupt
+    ADI_TCCRB = 0x09;
+    ADI_TCCRC = 0x00;
+    ADI_VALUE = 16000000.0 / FS;	//- set Audio sample rate
+    SET(ADI_TIMSK, ADI_OCIE);     //-Start audio interrupt
+    sei();                        //-+
 
+    //8bit PWM output
     output_mode=d;
-
     switch(d)
     {
-    case DIFF:                                        //-Differntial signal on CHA and CHB pins (11,3)
-      TCCR2A = 0xB3;                                  //-8 bit audio PWM
-      TCCR2B = 0x01;                                  // |
-      OCR2A = OCR2B = 127;                            //-+
-      SET(DDRB, 3);				      //-PWM pin
-      SET(DDRD, 3);				      //-PWM pin
-      break;
+      case DIFF: // Differential signal on CHA and CHB pins
+        #if defined(__AVR_ATmega1280__)  || defined(__AVR_ATmega2560__)
+          PWM_TCCRA = 0x2D;                                  
+          PWM_TCCRB = 0x09;                                 
+        #else
+          PWM_TCCRA = 0xB3;                                  
+          PWM_TCCRB = 0x01;                                  
+        #endif
+        PWM_A_VALUE = PWM_B_VALUE = 127;
+        SET(PWM_A_DDR, PWM_A_Bit);				      // set PWM pin to output
+        SET(PWM_B_DDR, PWM_B_Bit);				      // set PWM pin to output
+        break;
 
-    case CHB:                                         //-Single ended signal on CHB pin (3)
-      TCCR2A = 0x23;                                  //-8 bit audio PWM
-      TCCR2B = 0x01;                                  // |
-      OCR2A = OCR2B = 127;                            //-+
-      SET(DDRD, 3);				      //-PWM pin
-      break;
+      case CHB: // Single ended signal on CHB pin PWM_B_PIN
+        #if defined(__AVR_ATmega1280__)  || defined(__AVR_ATmega2560__)
+          PWM_TCCRA = 0x21;                                  
+          PWM_TCCRB = 0x09;                                 
+        #else
+          PWM_TCCRA = 0x23;               
+          PWM_TCCRB = 0x01; 
+        #endif
+        PWM_A_VALUE = PWM_B_VALUE = 127;
+        SET(PWM_B_DDR, PWM_B_Bit);				      // set PWM pin to output
+        break;
 
-    case CHA:
-    default:
-      output_mode=CHA;                                //-Single ended signal in CHA pin (11)
-      TCCR2A = 0x83;                                  //-8 bit audio PWM
-      TCCR2B = 0x01;                                  // |
-      OCR2A = OCR2B = 127;                            //-+
-      SET(DDRB, 3);				      //-PWM pin
-      break;
-
+      case CHA:
+      default:
+        output_mode=CHA; // Single ended signal in CHA pin PWM_A_PIN
+        #if defined(__AVR_ATmega1280__)  || defined(__AVR_ATmega2560__)
+          PWM_TCCRA = 0x09;                                  
+          PWM_TCCRB = 0x09;                                 
+        #else
+          PWM_TCCRA = 0x83;                                 
+          PWM_TCCRB = 0x01;
+        #endif
+        PWM_A_VALUE = PWM_B_VALUE = 127;
+        SET(PWM_A_DDR, PWM_A_Bit);				      // set PWM pin to output
+        break;
     }
   }
 
@@ -188,7 +285,7 @@ public:
 
   unsigned char voiceFree(unsigned char voice)
   {
-    if (!(((unsigned char*)&EPCW[voice])[1]&0x80))
+    if (!(((unsigned char*)&EnvelopePhaseAcc[voice])[1]&0x80))
       return 0;
     return 1;
   }
@@ -205,7 +302,7 @@ public:
     setPitch(voice,pitch);
     setEnvelope(voice,env);
     setLength(voice,length);
-    setMod(voice,mod);
+    setModChar(voice,mod);
   }
 
   //*********************************************************************
@@ -277,17 +374,20 @@ public:
 
   void setLength(unsigned char voice,unsigned char length)
   {
-    EFTW[voice]=pgm_read_word(&EFTWS[length]);
+    EnvelopePhaseInc[voice]=pgm_read_word(&EFTWS[length]);
   }
 
   //*********************************************************************
   //  Setup mod
   //*********************************************************************
 
-  void setMod(unsigned char voice,unsigned char mod)
+  void setModChar(unsigned char voice, unsigned char mod) //mod 0..127
   {
-    //    MOD[voice]=(unsigned int)mod*8;//0-1023 512=no mod
-    MOD[voice]=(int)mod-64;//0-1023 512=no mod
+    EnvelopeModulation[voice]=((int)mod-64)*8;//-512..511 0=no mod
+  }
+  void setMod(unsigned char voice, int mod)
+  {
+    EnvelopeModulation[voice]=mod;
   }
 
   //*********************************************************************
@@ -297,8 +397,8 @@ public:
   void mTrigger(unsigned char voice,unsigned char MIDInote)
   {
     PITCH[voice]=pgm_read_word(&PITCHS[MIDInote]);
-    EPCW[voice]=0;
-    FTW[divider] = PITCH[voice] + (int)   (((PITCH[voice]>>6)*(EPCW[voice]>>6))/128)*MOD[voice];
+    EnvelopePhaseAcc[voice]=0;
+    WavePhaseInc[divider] = PITCH[voice] + (int)   (((PITCH[voice]>>6)*(EnvelopePhaseAcc[voice]>>6))/128)*EnvelopeModulation[voice];
   }
 
   //*********************************************************************
@@ -317,7 +417,7 @@ public:
 
   void setTime(unsigned char voice,float t)
   {
-    EFTW[voice]=(1.0/t)/(FS/(32767.5*10.0));//[s];
+    EnvelopePhaseInc[voice]=(1.0/t)/(FS/(32767.5*10.0));//[s];
   }
 
   //*********************************************************************
@@ -326,9 +426,9 @@ public:
 
   void trigger(unsigned char voice)
   {
-    EPCW[voice]=0;
-    FTW[voice]=PITCH[voice];
-    //    FTW[voice]=PITCH[voice]+(PITCH[voice]*(EPCW[voice]/(32767.5*128.0  ))*((int)MOD[voice]-512));
+    EnvelopePhaseAcc[voice]=0;
+    WavePhaseInc[voice]=PITCH[voice];
+    //    WavePhaseInc[voice]=PITCH[voice]+(PITCH[voice]*(EnvelopePhaseAcc[voice]/(32767.5*128.0  ))*((int)EnvelopeModulation[voice]-512));
   }
 
   //*********************************************************************
@@ -337,11 +437,11 @@ public:
 
   void suspend()
   {
-    CLR(TIMSK1, OCIE1A);                            //-Stop audio interrupt
+    CLR(ADI_TIMSK, ADI_OCIE);                            //-Stop audio interrupt
   }
   void resume()
   {
-    SET(TIMSK1, OCIE1A);                            //-Start audio interrupt
+    SET(ADI_TIMSK, ADI_OCIE);                            //-Start audio interrupt
   }
 
 };
