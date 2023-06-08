@@ -23,17 +23,20 @@
 
 volatile unsigned int PITCH[4];          //-Voice pitch
 volatile unsigned int WavePhaseAcc[4];			//-Wave phase accumolators
-volatile unsigned int WavePhaseInc[4] ;           //-Wave frequency tuning words
+volatile unsigned int WavePhaseInc[4];           //-Wave frequency tuning words
 volatile unsigned int wavs[4];                                  //-Wave table selector [address of wave in memory]
+
+volatile unsigned int waveMix[4][32];          //-Waveform Mix Table
+volatile unsigned int WaveMixPhaseAcc[4]; //-Waveform Mix phase (LFO phase) accumulator
+volatile unsigned int WaveMixPhaseInc[4]; //-Waveform Mix phase (LFO speed) increment
+
 volatile unsigned char AMP[4];           //-Wave amplitudes [0-255]
 
-Envelope envelopes[4];             // selected Envelope
-EnvParams envParams[4];   // Envelope parameters - attack, decay, release: [0-127], sustain: [0-255]
+volatile EnvelopeState envelopes[4];             // selected Envelope
+volatile AmpEnvParams ampEnvParams[4];   // Envelope parameters - attack, decay, release: [0-127], sustain: [0-255]
 volatile unsigned int envs[4];                                  // Envelope selector [address of envelope in memory]
 volatile unsigned int EnvelopePhaseAcc[] = {0x8000, 0x8000, 0x8000, 0x8000}; //-Envelope phase accumolator
 volatile unsigned int EnvelopePhaseInc[4];               //-Envelope speed tuning word
-
-volatile int EnvelopeModulation[4] ;                         //-Voice envelope modulation [0-1023 512=no mod. <512 pitch down >512 pitch up]
 
 volatile unsigned char divider = 4;                             //-Sample rate decimator for envelope
 volatile unsigned int tim = 0;
@@ -158,11 +161,9 @@ SIGNAL(ADI_INTERRUPT)
   //-------------------------------
   // Volume envelope generator (~8% CPU)
   //-------------------------------
-  if (!(synth::voiceFree(divider))){
+  if (!(synth::envelopeSectionFinished(divider))){
     AMP[divider] = pgm_read_byte(envs[divider] + (((unsigned char*)&(EnvelopePhaseAcc[divider]+=EnvelopePhaseInc[divider]))[1]));
   }
-  // Assumption: RELEASE Envelopes end on 0. Else incorporate:
-  // AMP[divider] = 0;
   
 
   //-------------------------------
@@ -177,12 +178,12 @@ SIGNAL(ADI_INTERRUPT)
     (((signed char)pgm_read_byte(wavs[3] + ((unsigned char *)&(WavePhaseAcc[3] += WavePhaseInc[3]))[1]) * AMP[3]) >> 8)
     ) >> 2);
 
-  //************************************************
-  //  Modulation engine (~15% CPU)
-  //************************************************
-  //WavePhaseInc[divider] = PITCH[divider] + (int)   (((PITCH[divider]/64)*(EnvelopePhaseAcc[divider]/64)) /128)*EnvelopeModulation[divider];
-  WavePhaseInc[divider] = PITCH[divider] + (int)   (((PITCH[divider]>>6)*(EnvelopePhaseAcc[divider]>>6)) /128)*EnvelopeModulation[divider];
-	
+  
+  //-------------------------------
+  //  Waveform Mix/LFO (?% CPU)
+  //-------------------------------
+  wavs[divider] = (unsigned char *)waveMix[divider][((unsigned char *)&(WaveMixPhaseAcc[divider] += WaveMixPhaseInc[divider]))[1] >> 2];
+
   tim++;
 }
 
@@ -255,11 +256,6 @@ static unsigned char synth::synthTick(void)
   return 0;
 }
 
-static bool synth::voiceFree(unsigned char voice)
-{
-  return (((unsigned char*)&EnvelopePhaseAcc[voice])[1]&0x80);
-}
-
 
 //*********************************************************************
 //  Setup all voice parameters in MIDI range
@@ -270,39 +266,76 @@ static void synth::setupVoice(unsigned char voice,
                               unsigned char attack,
                               unsigned char decay,
                               unsigned char sustain,
-                              unsigned char release,
-                              unsigned int mod)
+                              unsigned char release)
 {
   setWave(voice,wave);
-  setEnvParams(voice, attack, decay, sustain, release);
-  setModChar(voice,mod);
+  setAmpEnvParams(voice, attack, decay, sustain, release);
 }
 
 
-//  Setup wave [0-6]
+//  Setup wave
 static void synth::setWave(unsigned char voice, WAVEFORM wave)
 {
+  WaveMixPhaseAcc[voice] = 0;
+  WaveMixPhaseInc[voice] = 0;
+
   switch (wave)
   {
     case TRIANGLE:
-      wavs[voice] = (unsigned int)TriangleTable;
+      waveMix[voice][0] = (unsigned int)TriangleTable;
       break;
     case SQUARE:
-      wavs[voice] = (unsigned int)SquareTable;
+      waveMix[voice][0] = (unsigned int)SquareTable;
       break;
     case SAW:
-      wavs[voice] = (unsigned int)SawTable;
+      waveMix[voice][0] = (unsigned int)SawTable;
       break;
     case RAMP:
-      wavs[voice] = (unsigned int)RampTable;
+      waveMix[voice][0] = (unsigned int)RampTable;
       break;
     case NOISE:
-      wavs[voice] = (unsigned int)NoiseTable;
+      waveMix[voice][0] = (unsigned int)NoiseTable;
+      break;
+    case EPIANO:
+      waveMix[voice][0] = (unsigned int)EpianoTable;
       break;
     case SINE:
     default:
-      wavs[voice] = (unsigned int)SinTable;
+      waveMix[voice][0] = (unsigned int)SinTable;
       break;
+  }
+}
+
+//  Setup mixed wave (with LFO)
+static void synth::setWaveformMix(unsigned char voice, WAVEFORMMIX waveformMix)
+{
+  switch (waveformMix)
+  {
+    case PIANO:
+      for (int i = 0; i < 32; i++){
+        waveMix[voice][i] = (unsigned int) PianoMixTable + i/2;
+      }
+      break;
+    case TRIANGLE_AND_SAW:
+      for (int i = 0; i < 32; i++){
+        waveMix[voice][i] = (unsigned int) TriangleAndSawMixTable + i;
+      }
+      break;
+    case SINE_AND_TRIANGLE:
+      for (int i = 0; i < 32; i++){
+        waveMix[voice][i] = (unsigned int) SineAndTriangleMixTable + i/2;
+      }
+      break;
+    case NO_MIX:
+    default:
+      break;
+  }
+  WaveMixPhaseAcc[voice] = 0;
+  if(waveformMix != NO_MIX){
+    WaveMixPhaseInc[voice] = pgm_read_word(&EFTWS[90]);
+  }
+  else{
+    WaveMixPhaseInc[voice] = 0;
   }
 }
 
@@ -319,53 +352,58 @@ static void synth::setFrequency(unsigned char voice,float f)
 }
 
 // takes parameters [0-127], saves sustain [0-255]
-static void synth::setEnvParams(unsigned char voice,
+static void synth::setAmpEnvParams(unsigned char voice,
   	  unsigned char attack, unsigned char decay,
-      unsigned char sustain, unsigned char release){
-  envParams[voice].attack = attack;
-  envParams[voice].decay = decay;
-  envParams[voice].sustain = sustain<<1;
-  envParams[voice].release = release;
+      unsigned char sustain, unsigned char release, unsigned char releaseShape = 0){
+  ampEnvParams[voice].attack = attack;
+  ampEnvParams[voice].decay = decay;
+  ampEnvParams[voice].sustain = sustain<<1;
+  ampEnvParams[voice].release = release;
+  ampEnvParams[voice].releaseShape = releaseShape;
 }
 
 //  Setup Envelope
-static void synth::setEnvelope(unsigned char voice, Envelope envelope)
+static void synth::setAmpEnvelopeState(unsigned char voice, EnvelopeState envelope)
 {
   envelopes[voice] = envelope;
   switch (envelope)
   {
   case ATTACK:
     envs[voice] = (unsigned int)AttackDecayTable;
-    setLength(voice, envParams[voice].attack);
+    setLength(voice, ampEnvParams[voice].attack);
     break;
   case DECAY:
-    envs[voice] = ((unsigned char*)&AttackDecayTable+128-(envParams[voice].sustain>>1));
-    setLength(voice, envParams[voice].decay);
-    EnvelopePhaseAcc[voice] = (unsigned int)envParams[voice].sustain<<7;
+    envs[voice] = ((unsigned char*)&AttackDecayTable+128-(ampEnvParams[voice].sustain>>1));
+    setLength(voice, ampEnvParams[voice].decay);
+    EnvelopePhaseAcc[voice] = (unsigned int)ampEnvParams[voice].sustain<<7;
     break;
   case SUSTAIN:
-    envs[voice] = ((unsigned char*)&AttackDecayTable+255-(envParams[voice].sustain>>1));
+    envs[voice] = ((unsigned char*)&AttackDecayTable+255-(ampEnvParams[voice].sustain>>1));
     EnvelopePhaseAcc[voice] = 0;
     EnvelopePhaseInc[voice] = 0;
     break;
-
-  case RELEASE:   // intentional fall-through 
-  case ENVELOPE0:
-    envs[voice] = (unsigned int)Env0;
+ 
+  case RELEASE:
+    switch(ampEnvParams->releaseShape){
+      case 0:
+        envs[voice] = (unsigned int)Env0;
+        break;
+      case 1:
+        envs[voice] = (unsigned int)Env1;
+        break;
+      case 2:
+        envs[voice] = (unsigned int)Env2;
+        break;
+      case 3:
+        envs[voice] = (unsigned int)Env3;
+    }
     break;
 
-  case ENVELOPE1:
-    envs[voice] = (unsigned int)Env1;
-    break;
-  case ENVELOPE2:
-    envs[voice] = (unsigned int)Env2;
-    break;
-  case ENVELOPE3:
-    envs[voice] = (unsigned int)Env3;
-    break;
-
+  case IDLE:
   default:
     envs[voice] = (unsigned int)Env0;
+    EnvelopePhaseInc[voice] = 0;
+    EnvelopePhaseAcc[voice] = 0x7FFF; // highest number allowed
     break;
   }
 }
@@ -373,12 +411,12 @@ static void synth::setEnvelope(unsigned char voice, Envelope envelope)
 // Find the point at which the release Envelope has the value of the sustain parameter
 // - Assumption: using Env0 as RELEASE
 // - Assumptions for the envelope: start: 255, end: 0, strictly decreasing
-// - Root-finding algorithm: Bisection method [~16µs with n<6 -> accuracy of +-2 for 'EnvelopePhaseAcc']
-static void synth::setEnvelopePhaseAccForRelease(unsigned char voice){  
+// - Root-finding algorithm: Bisection method [~16µs with n<6 --> accuracy of +-2 for 'EnvelopePhaseAcc']
+static void synth::setAmpEnvelopeStatePhaseAccForRelease(unsigned char voice){  
   unsigned char left = 0, right=127;
   unsigned char probe = 64 - (AMP[voice] >> 2); //starting point (likely approximate, linear dropoff in the first half)
   for(unsigned char n = 0; n < 6; n++){
-    if(pgm_read_byte(((unsigned char *) &Env0 + probe)) > AMP[voice]){
+    if(pgm_read_byte(((unsigned char *) &Env0 + probe)) >= AMP[voice]){
       left = probe;
     }
     else{
@@ -389,15 +427,22 @@ static void synth::setEnvelopePhaseAccForRelease(unsigned char voice){
   EnvelopePhaseAcc[voice] = (unsigned int)probe<<8;
 }
 
+static bool synth::envelopeSectionFinished(unsigned char voice)
+{
+  return (((unsigned char*)&EnvelopePhaseAcc[voice])[1]&0x80);
+}
+
 static void synth::updateEnvelope(unsigned char voice){
-  if(voiceFree(voice)){
+  if(envelopeSectionFinished(voice)){
     switch(envelopes[voice]){
       case ATTACK:
-        synth::setEnvelope(voice, DECAY);
+        synth::setAmpEnvelopeState(voice, DECAY);
         break;
       case DECAY:
-        synth::setEnvelope(voice, SUSTAIN);
+        synth::setAmpEnvelopeState(voice, SUSTAIN);
         break;
+      case RELEASE:
+        synth::setAmpEnvelopeState(voice, IDLE);
       default:
         break;
     }
@@ -417,41 +462,30 @@ static void synth::setTime(unsigned char voice,float t)
 }
 
 
-//  Setup Modulation
-static void synth::setModChar(unsigned char voice, unsigned char mod) //mod 0..127
-{
-  EnvelopeModulation[voice]=((int)mod-64)*8;//-512..511 0=no mod
-}
-static void synth::setMod(unsigned char voice, int mod)
-{
-  EnvelopeModulation[voice]=mod;
-}
-
-
 //  Midi trigger
-static void synth::mStart(unsigned char voice,unsigned char MIDInote, Envelope envelope = ATTACK)
+static void synth::mStart(unsigned char voice,unsigned char MIDInote, EnvelopeState envelope = ATTACK)
 {
-  setEnvelope(voice, envelope);
+  setAmpEnvelopeState(voice, envelope);
   PITCH[voice]=pgm_read_word(&PITCHS[MIDInote]);
   EnvelopePhaseAcc[voice]=0;
   WavePhaseAcc[voice] = 0;
-  WavePhaseInc[voice] = PITCH[voice] + (int)   (((PITCH[voice]>>6)*(EnvelopePhaseAcc[voice]>>6))/128)*EnvelopeModulation[voice];
+  WavePhaseInc[voice] = PITCH[voice];
 }
 static void synth::mStop(unsigned char voice)
 {
   EnvelopePhaseInc[voice] = 0;
-  setEnvelopePhaseAccForRelease(voice);
-  setEnvelope(voice, RELEASE);
-  setLength(voice, envParams[voice].release);
+  setAmpEnvelopeStatePhaseAccForRelease(voice);
+  setAmpEnvelopeState(voice, RELEASE);
+  setLength(voice, ampEnvParams[voice].release);
 }
 
 
 // Simple trigger
 static void synth::trigger(unsigned char voice)
 {
+  setAmpEnvelopeState(voice, RELEASE);
   EnvelopePhaseAcc[voice]=0;
   WavePhaseInc[voice]=PITCH[voice];
-  //    WavePhaseInc[voice]=PITCH[voice]+(PITCH[voice]*(EnvelopePhaseAcc[voice]/(32767.5*128.0  ))*((int)EnvelopeModulation[voice]-512));
 }
 
 

@@ -19,41 +19,52 @@ enum OUTPUTMODE{
   CHB
 };
 
+enum WAVEFORMMIX{
+  NO_MIX,
+  TRIANGLE_AND_SAW,
+  SINE_AND_TRIANGLE,
+  PIANO
+};
+
 enum WAVEFORM{
   SINE,
   TRIANGLE,
   SAW,
   RAMP,
   SQUARE,
-  NOISE   
+  NOISE,
+  EPIANO
 };
 
-enum Envelope{ 
+enum EnvelopeState{ 
+  IDLE,
   ATTACK,
   DECAY,
   SUSTAIN,
-  RELEASE,
-  ENVELOPE0, 
-  ENVELOPE1,
-  ENVELOPE2,
-  ENVELOPE3
+  RELEASE
 };
 
-struct EnvParams{ // [0-127]
+struct AmpEnvParams{ // Amplitude envelope params
   unsigned char attack;
   unsigned char decay;
   unsigned char sustain;
   unsigned char release;
+  unsigned char releaseShape;
 };
 
 extern volatile unsigned int PITCH[4];          //-Voice pitch
 extern volatile unsigned int WavePhaseAcc[4];			//-Wave phase accumulators
 extern volatile unsigned int WavePhaseInc[4];           //-Wave frequency tuning words
 extern volatile unsigned int wavs[4];                                  //-Wave table selector [address of wave in memory]
+
+extern volatile unsigned int waveMix[4][32];         //-Waveform Mix Table
+extern volatile unsigned int WaveMixPhaseAcc[4]; //-Waveform Mix phase (LFO phase) accumulator
+extern volatile unsigned int WaveMixPhaseInc[4]; //-Waveform Mix phase (LFO speed) increment
+
 extern volatile unsigned char AMP[4];           //-Wave amplitudes [0-255]
 
-extern Envelope envelopes[4];             // selected Envelope
-extern EnvParams envParams[4];            // Envelope parameters - attack, decay, release: [0-127], sustain: [0-255]
+extern volatile EnvelopeState envelopes[4];             // selected Envelope
+extern volatile AmpEnvParams ampEnvParams[4];            // Envelope parameters - attack, decay, release: [0-127], sustain: [0-255]
 extern volatile unsigned int envs[4];                                  // Envelope selector [address of envelope in memory]
 extern volatile unsigned int EnvelopePhaseAcc[]; //-Envelope phase accumulator
 extern volatile unsigned int EnvelopePhaseInc[4];               //-Envelope speed tuning word
@@ -79,8 +90,6 @@ public:
   //  Timing/sequencing functions
   //*********************************************************************
   static unsigned char synthTick(void);
-  static bool voiceFree(unsigned char voice);
-
 
   //*********************************************************************
   //  Setup all voice parameters in MIDI range
@@ -91,12 +100,12 @@ public:
                          unsigned char attack = 20,
                          unsigned char decay = 40,
                          unsigned char sustain = 70,
-                         unsigned char release = 90,
-                         unsigned int mod = 64);
+                         unsigned char release = 90);
 
 
-  //  Setup wave [0-6]
+  //  Setup wave
   static void setWave(unsigned char voice, WAVEFORM wave);
+  static void setWaveformMix(unsigned char voice, WAVEFORMMIX waveformMix);
 
   
   //  Setup Pitch [0-127]
@@ -105,14 +114,16 @@ public:
   static void setFrequency(unsigned char voice,float f);
 
   //  Setup Envelope
-  static void setEnvParams(unsigned char voice, 
+  static void setAmpEnvParams(unsigned char voice, 
                            unsigned char attack = 20,
                            unsigned char decay = 40,
                            unsigned char sustain = 70,
-                           unsigned char release = 90);
-  static void setEnvelope(unsigned char voice, Envelope envelope);
+                           unsigned char release = 90,
+                           unsigned char releaseShape = 0);
+  static void setAmpEnvelopeState(unsigned char voice, EnvelopeState envelope);
+  static bool envelopeSectionFinished(unsigned char voice);
   static void updateEnvelope(unsigned char voice);
-  static void setEnvelopePhaseAccForRelease(unsigned char voice);
+  static void setAmpEnvelopeStatePhaseAccForRelease(unsigned char voice);
 
 
   //  Setup Length [0-128]
@@ -127,7 +138,7 @@ public:
 
 
   //  Midi trigger
-  static void mStart(unsigned char voice,unsigned char MIDInote, Envelope envelope = ATTACK);
+  static void mStart(unsigned char voice,unsigned char MIDInote, EnvelopeState envelope = ATTACK);
   static void mStop(unsigned char voice);
 
   // Simple trigger
